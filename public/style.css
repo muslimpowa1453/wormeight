@@ -1,72 +1,46 @@
 body, html {
     margin: 0; padding: 0; width: 100%; height: 100%;
     overflow: hidden; background-color: #1a1a2e;
-    font-family: 'Fredoka One', cursive; /* Yuvarlak, tatlı font */
+    font-family: 'Fredoka One', cursive;
 }
 
 canvas { display: block; }
 
 #ui-layer {
     position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    pointer-events: none; /* Tıklamalar canvas'a geçsin diye */
+    pointer-events: none;
 }
 
-/* ANA MENÜ STİLİ */
-#main-menu {
-    position: absolute; top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    text-align: center;
-    pointer-events: auto; /* Menüye tıklanabilsin */
-    z-index: 10;
-}
-
-.game-title {
-    font-size: 60px; color: #ffcc00;
-    text-shadow: 4px 4px 0px #d35400;
-    margin-bottom: 20px;
-}
-
-.menu-box {
-    background: rgba(0, 0, 0, 0.6);
-    padding: 30px;
-    border-radius: 20px;
-    backdrop-filter: blur(5px);
-    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
-    width: 300px;
-    margin: 0 auto;
-}
-
-input {
-    padding: 15px; border-radius: 50px; border: none;
-    font-size: 18px; text-align: center; outline: none;
-    font-family: inherit;
-}
-
-#play-btn {
-    padding: 15px; border-radius: 50px; border: none;
-    font-size: 24px; cursor: pointer;
-    background: linear-gradient(to bottom, #2ecc71, #27ae60);
-    color: white; font-family: inherit;
-    box-shadow: 0 5px 0 #1e8449;
-    transition: transform 0.1s;
-}
-
-#play-btn:active {
-    transform: translateY(4px);
-    box-shadow: 0 1px 0 #1e8449;
-}
-
-.server-select {
-    background: #34495e; color: white;
-    padding: 10px; border-radius: 10px;
-    display: flex; align-items: center; justify-content: center; gap: 10px;
+/* Mini Map Stili */
+#minimap {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%; /* Yuvarlak Harita */
+    box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    z-index: 100;
 }
 
 .hud {
-    position: absolute; top: 20px; left: 20px;
+    position: absolute; top: 20px; left: 190px; /* Mini mapin sağına kaydırdık */
     color: white; font-size: 24px;
     text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
 }
+
+/* Ana Menü (Öncekiyle Aynı) */
+#main-menu {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center; pointer-events: auto; z-index: 10;
+}
+.game-title { font-size: 60px; color: #ffcc00; text-shadow: 4px 4px 0px #d35400; margin-bottom: 20px; }
+.menu-box {
+    background: rgba(0, 0, 0, 0.6); padding: 30px; border-radius: 20px;
+    backdrop-filter: blur(5px); display: flex; flex-direction: column; gap: 15px; width: 300px; margin: 0 auto;
+}
+input, #play-btn { padding: 15px; border-radius: 50px; border: none; font-size: 18px; outline: none; font-family: inherit; }
+#play-btn { cursor: pointer; background: linear-gradient(to bottom, #2ecc71, #27ae60); color: white; }
+.server-select { background: #34495e; color: white; padding: 10px; border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.footer-text { color: #aaa; margin-top: 20px; font-size: 14px; }
