@@ -1,284 +1,213 @@
-const socket = io(); 
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d', { alpha: false }); // Alpha false performans artırır
+// --- ÖNEMLİ: BURAYA KENDİ RENDER LİNKİNİ YAZ ---
+// Sondaki '/' işaretini koyma. Örn: 'https://wormeight.onrender.com'
+const SERVER_URL = 'https://wormeight.onrender.com'; 
 
-// --- HTML ELEMENTLERİ ---
+const socket = io(SERVER_URL); 
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+
 const mainMenu = document.getElementById('main-menu');
 const hud = document.getElementById('hud');
-const scoreEl = document.getElementById('score');
+const scoreEl = document.getElementById('score-val');
 const playBtn = document.getElementById('play-btn');
 const nickInput = document.getElementById('nickname');
+const connectionStatus = document.getElementById('connection-status');
 
 let W, H;
-let camera = { x: 0, y: 0, z: 1 }; // z = zoom
-
-// Oyun Verileri
+let camera = { x: 0, y: 0, z: 1 };
 let me = null;
 let players = {};
 let foods = [];
 let mouse = { x: 0, y: 0 };
 let isBoosting = false;
 
-// --- GÖRSEL VARLIKLAR (RESİMSİZ WORMATE) ---
-// Canvas üzerinde sanal "resimler" oluşturuyoruz (Cache Canvas)
+// --- GÖRSELLER (SKIN VE YEMLER) ---
 const foodCache = {};
-
-function createFoodAssets() {
+function createAssets() {
     const types = ['candy', 'donut', 'cookie', 'cake'];
-    types.forEach(type => {
+    types.forEach(t => {
         const c = document.createElement('canvas');
-        c.width = 40; c.height = 40;
-        const x = c.getContext('2d');
-        const cx = 20, cy = 20;
-
-        if(type === 'donut') {
-            x.beginPath(); x.arc(cx, cy, 15, 0, Math.PI*2);
-            x.fillStyle = '#FF69B4'; x.fill(); // Pembe
-            x.beginPath(); x.arc(cx, cy, 6, 0, Math.PI*2);
-            x.fillStyle = '#222'; x.fill(); // Delik (Arkaplan rengi olmalı aslında)
-            // Süsler
-            x.strokeStyle = '#FFF'; x.lineWidth = 2; 
-            x.stroke(); 
-        } else if (type === 'candy') {
-            x.beginPath(); x.arc(cx, cy, 14, 0, Math.PI*2);
-            x.fillStyle = '#FF4500'; x.fill();
-            x.strokeStyle = '#FFF'; x.lineWidth = 4;
-            x.beginPath(); x.moveTo(5,5); x.lineTo(35,35); x.stroke();
+        c.width=40; c.height=40; 
+        const x=c.getContext('2d');
+        x.translate(20,20);
+        if(t==='donut') {
+            x.beginPath(); x.arc(0,0,15,0,7); x.fillStyle='#FF69B4'; x.fill();
+            x.beginPath(); x.arc(0,0,6,0,7); x.fillStyle='#1a1a2e'; x.fill();
+            x.strokeStyle='#FFF'; x.lineWidth=2; x.stroke();
+        } else if(t==='cake') {
+            x.fillStyle='#8B4513'; x.fillRect(-10,-10,20,20);
+            x.fillStyle='#FF4500'; x.beginPath(); x.arc(0,-10,3,0,7); x.fill();
         } else {
-            // Cookie
-            x.beginPath(); x.arc(cx, cy, 14, 0, Math.PI*2);
-            x.fillStyle = '#D2691E'; x.fill();
-            x.fillStyle = '#3E2723'; 
-            x.beginPath(); x.arc(cx-5, cy-5, 2, 0, Math.PI*2); x.fill();
-            x.beginPath(); x.arc(cx+5, cy+5, 2, 0, Math.PI*2); x.fill();
+            x.beginPath(); x.arc(0,0,12,0,7); x.fillStyle=t==='candy'?'#FFD700':'#e91e63'; x.fill();
         }
-        foodCache[type] = c;
+        foodCache[t] = c;
     });
 }
-createFoodAssets();
+createAssets();
 
-// --- BAŞLANGIÇ ---
+// --- BAĞLANTI OLAYLARI ---
+socket.on('connect', () => {
+    console.log("Sunucuya bağlandı!");
+    connectionStatus.innerText = "Sunucuya Bağlandı! Oynamaya Hazır.";
+    connectionStatus.style.color = "#00ff00";
+    playBtn.disabled = false;
+    playBtn.style.opacity = "1";
+    playBtn.innerText = "OYNA";
+    me = socket.id;
+});
+
+socket.on('connect_error', () => {
+    connectionStatus.innerText = "Sunucu aranıyor... (Render uyanıyor olabilir)";
+    connectionStatus.style.color = "#ffcc00";
+    playBtn.disabled = true;
+    playBtn.style.opacity = "0.5";
+});
+
 playBtn.addEventListener('click', () => {
+    if(!socket.connected) return;
     socket.emit('joinGame', { 
         nick: nickInput.value || "Worm",
-        skin: Math.floor(Math.random() * 3) // Rastgele skin
+        skin: Math.floor(Math.random() * 5)
     });
     mainMenu.style.display = 'none';
     hud.style.display = 'block';
 });
 
-// --- VERİ ALIMI ---
 socket.on('u', (pack) => {
-    // Players Update
-    let serverPlayers = {};
+    // Oyuncuları güncelle
+    let presentIds = {};
     pack.p.forEach(p => {
-        serverPlayers[p.i] = p;
-        if (!players[p.i]) {
-            players[p.i] = p; // Yeni oyuncu
+        presentIds[p.i] = true;
+        if(!players[p.i]) {
+            players[p.i] = p; // Yeni
         } else {
-            // Var olan oyuncuyu güncelle (Interpolasyon hedefi)
-            players[p.i].tx = p.x;
-            players[p.i].ty = p.y;
-            players[p.i].ta = p.a;
-            players[p.i].h = p.h; // History
+            players[p.i].tx = p.x; // Hedef X
+            players[p.i].ty = p.y; // Hedef Y
+            players[p.i].ta = p.a; // Hedef Açı
+            players[p.i].h = p.h;  // Kuyruk
             players[p.i].r = p.r;
             players[p.i].s = p.s;
         }
     });
-
-    // Oyundan çıkanları sil
-    for (let id in players) {
-        if (!serverPlayers[id]) delete players[id];
-    }
-
+    for(let id in players) if(!presentIds[id]) delete players[id];
     foods = pack.f;
 });
 
-socket.on('connect', () => me = socket.id);
+// --- RENDER DÖNGÜSÜ ---
+function lerp(s, e, t) { return s * (1-t) + e * t; }
 
-// --- RENDER LOOP ---
-function lerp(start, end, t) { return start * (1-t) + end * t; }
+function draw() {
+    requestAnimationFrame(draw);
+    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0,0,W,H);
 
-function animate() {
-    requestAnimationFrame(animate);
-
-    // Ekranı temizle
-    ctx.fillStyle = '#1a1a2e'; // Koyu mor arkaplan (Wormate stili)
-    ctx.fillRect(0, 0, W, H);
-
-    if (!me || !players[me]) return;
-
-    const mySnake = players[me];
-
-    // 1. İNTERPOLASYON (YUMUŞAK HAREKET)
-    // Client tarafında fizik hesabı yaparak server gecikmesini gizle
-    for (let id in players) {
-        let p = players[id];
-        if (p.tx !== undefined) {
-            // Pozisyonu hedefe doğru %15 yaklaştır (Çok akıcı)
+    // Eğer oyunda değilsek veya henüz bağlanmadıysak menü arkasında grid dönsün
+    let targetX = W/2, targetY = H/2;
+    if(me && players[me]) {
+        const p = players[me];
+        // İnterpolasyon
+        if(p.tx) {
             p.x = lerp(p.x, p.tx, 0.15);
             p.y = lerp(p.y, p.ty, 0.15);
-            
-            // Açıyı düzelt
-            let diff = p.ta - p.angle || 0;
-            while (diff <= -Math.PI) diff += Math.PI * 2;
-            while (diff > Math.PI) diff -= Math.PI * 2;
-            p.angle = (p.angle || 0) + diff * 0.15;
+            let d = p.ta - p.angle;
+            while(d <= -Math.PI) d+=Math.PI*2; while(d>Math.PI) d-=Math.PI*2;
+            p.angle += d*0.15;
         }
+        targetX = p.x; targetY = p.y;
+        
+        // Zoom
+        let tz = Math.max(0.5, Math.min(1.2, 150/(p.r+80)));
+        camera.z = lerp(camera.z, tz, 0.05);
+    } else {
+        // Menüde arka plan yavaşça kaysın
+        targetX = Math.cos(Date.now()/5000)*500 + 2000;
+        targetY = Math.sin(Date.now()/5000)*500 + 2000;
     }
 
-    // 2. KAMERA VE ZOOM
-    // Yılan büyüdükçe kamera uzaklaşır (Zoom out)
-    let targetZoom = 150 / (mySnake.r + 100); // Dinamik Zoom Formülü
-    if (targetZoom < 0.5) targetZoom = 0.5;
-    if (targetZoom > 1.2) targetZoom = 1.2;
-    camera.z = lerp(camera.z, targetZoom, 0.05);
-
-    camera.x = lerp(camera.x, mySnake.x, 0.1);
-    camera.y = lerp(camera.y, mySnake.y, 0.1);
+    camera.x = lerp(camera.x, targetX, 0.1);
+    camera.y = lerp(camera.y, targetY, 0.1);
 
     ctx.save();
-    // Ekranın ortasına taşı
     ctx.translate(W/2, H/2);
-    // Zoom yap
     ctx.scale(camera.z, camera.z);
-    // Kamerayı oyuncu pozisyonuna odakla
     ctx.translate(-camera.x, -camera.y);
 
-    // 3. ARKAPLAN GRİD (Sonsuzluk hissi için)
     drawGrid();
-    drawBorders();
-
-    // 4. YEMLER (Resim cache'inden çiz)
-    for (let f of foods) {
-        let img = foodCache[f.t] || foodCache['candy'];
-        ctx.drawImage(img, f.x - f.r, f.y - f.r, f.r*2, f.r*2);
-    }
-
-    // 5. OYUNCULAR (Wormate Skinleri)
-    // Skora göre sırala (Küçükler altta)
-    let sorted = Object.values(players).sort((a,b) => a.s - b.s);
     
-    for (let p of sorted) {
-        drawSnake(ctx, p);
-    }
+    // Sınırlar
+    ctx.strokeStyle='#330000'; ctx.lineWidth=50; ctx.strokeRect(0,0,4000,4000);
+
+    // Yemler
+    foods.forEach(f => {
+        let img = foodCache[f.t] || foodCache['candy'];
+        ctx.drawImage(img, f.x-f.r, f.y-f.r, f.r*2, f.r*2);
+    });
+
+    // Oyuncular
+    Object.values(players).sort((a,b)=>a.s-b.s).forEach(p => drawSnake(p));
 
     ctx.restore();
 
-    // UI Güncelle
-    scoreEl.innerText = mySnake.s;
-    
-    // Input Gönder
-    sendInput();
+    if(me && players[me]) {
+        scoreEl.innerText = players[me].s;
+        let angle = Math.atan2(mouse.y - H/2, mouse.x - W/2);
+        socket.emit('input', { a: angle, b: isBoosting });
+    }
 }
 
-function drawSnake(ctx, p) {
-    if (!p.h || p.h.length === 0) return;
+function drawSnake(p) {
+    if(!p.h || p.h.length<2) return;
+    const colors = [['#FF9800','#F57C00'], ['#E91E63','#C2185B'], ['#00BCD4','#0097A7'], ['#8BC34A','#689F38'], ['#9C27B0','#7B1FA2']];
+    const skin = colors[p.k % colors.length] || colors[0];
 
-    // Yılan Boğumları (Wormate stili: Renkli çizgiler)
-    // Gövdeyi çizmek için history noktalarını birleştirmek yerine
-    // kalın bir stroke (çizgi) kullanacağız. Bu çok daha performanslıdır.
+    ctx.lineCap='round'; ctx.lineJoin='round';
     
-    // Skin Renkleri
-    let colors = ['#ffcc00', '#ff0055', '#00ffcc'];
-    let mainColor = colors[p.k % colors.length] || '#fff';
-    let stripeColor = 'rgba(0,0,0,0.2)';
-
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    
-    // Gövde (Dış çizgi / Gölge)
+    // Gölge
     ctx.beginPath();
-    p.h.forEach((pos, i) => {
-        if(i===0) ctx.moveTo(pos.x, pos.y);
-        else ctx.lineTo(pos.x, pos.y);
-    });
-    // Kafayı da ekle
+    p.h.forEach((pos,i)=>i==0?ctx.moveTo(pos.x,pos.y+5):ctx.lineTo(pos.x,pos.y+5));
+    ctx.lineTo(p.x, p.y+5);
+    ctx.lineWidth=p.r*2; ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.stroke();
+
+    // Gövde
+    ctx.beginPath();
+    p.h.forEach((pos,i)=>i==0?ctx.moveTo(pos.x,pos.y):ctx.lineTo(pos.x,pos.y));
     ctx.lineTo(p.x, p.y);
     
-    ctx.lineWidth = p.r * 2 + 2;
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)'; // Gölge
-    ctx.stroke();
+    ctx.lineWidth=p.r*2; ctx.strokeStyle=skin[0]; ctx.stroke();
+    
+    // Desen
+    ctx.lineWidth=p.r*1.2; ctx.strokeStyle=skin[1]; 
+    ctx.setLineDash([20,20]); ctx.stroke(); ctx.setLineDash([]);
 
-    // Gövde (Ana Renk)
-    ctx.lineWidth = p.r * 2;
-    ctx.strokeStyle = mainColor;
-    ctx.stroke();
-
-    // Gövde (Desenler - Çizgiler)
-    ctx.setLineDash([p.r, p.r]); // Kesik çizgilerle desen yap
-    ctx.lineWidth = p.r * 1.5;
-    ctx.strokeStyle = stripeColor;
-    ctx.stroke();
-    ctx.setLineDash([]); // Reset
-
-    // KAFA
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.rotate(p.angle);
-
-    // Kafa yuvarlağı
-    ctx.fillStyle = mainColor;
-    ctx.beginPath(); ctx.arc(0, 0, p.r, 0, Math.PI*2); ctx.fill();
-
-    // Gözler (Wormate stili büyük şaşkın gözler)
-    let eyeOffset = p.r * 0.4;
-    let eyeSize = p.r * 0.35;
-
-    ctx.fillStyle = 'white';
-    ctx.beginPath(); ctx.arc(eyeOffset, -eyeOffset, eyeSize, 0, Math.PI*2); ctx.fill(); // Sağ
-    ctx.beginPath(); ctx.arc(eyeOffset, eyeOffset, eyeSize, 0, Math.PI*2); ctx.fill();  // Sol
-
-    // Göz Bebekleri
-    ctx.fillStyle = 'black';
-    let pupilSize = eyeSize * 0.4;
-    // Göz bebekleri fareye/hareket yönüne baksın
-    ctx.beginPath(); ctx.arc(eyeOffset + 2, -eyeOffset, pupilSize, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(eyeOffset + 2, eyeOffset, pupilSize, 0, Math.PI*2); ctx.fill();
-
+    // Kafa
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.angle);
+    ctx.fillStyle=skin[0]; ctx.beginPath(); ctx.arc(0,0,p.r,0,7); ctx.fill();
+    
+    // Gözler
+    ctx.fillStyle='white'; 
+    ctx.beginPath(); ctx.arc(p.r*0.4, -p.r*0.4, p.r*0.35, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(p.r*0.4, p.r*0.4, p.r*0.35, 0, 7); ctx.fill();
+    ctx.fillStyle='black';
+    ctx.beginPath(); ctx.arc(p.r*0.5, -p.r*0.4, p.r*0.15, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(p.r*0.5, p.r*0.4, p.r*0.15, 0, 7); ctx.fill();
     ctx.restore();
 
     // İsim
-    ctx.fillStyle = 'white';
-    ctx.font = `bold ${Math.max(12, p.r)}px Arial`;
-    ctx.textAlign = 'center';
-    ctx.strokeStyle = 'black';
-    ctx.lineWidth = 3;
-    ctx.strokeText(p.n, p.x, p.y - p.r - 10);
-    ctx.fillText(p.n, p.x, p.y - p.r - 10);
+    ctx.fillStyle='white'; ctx.strokeStyle='black'; ctx.lineWidth=3;
+    ctx.font=`bold ${Math.max(14, p.r)}px Fredoka One`; ctx.textAlign='center';
+    ctx.strokeText(p.n, p.x, p.y-p.r-5); ctx.fillText(p.n, p.x, p.y-p.r-5);
 }
 
 function drawGrid() {
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-    ctx.lineWidth = 2;
-    const gridSize = 100;
-    
-    // Sadece kamera alanını çiz (Performans)
-    // Basit olması için geniş çiziyoruz
-    for (let x = 0; x <= 4000; x += gridSize) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 4000); ctx.stroke();
-    }
-    for (let y = 0; y <= 4000; y += gridSize) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(4000, y); ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,0.05)'; ctx.lineWidth=2;
+    for(let i=0; i<=4000; i+=100) {
+        ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,4000); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(4000,i); ctx.stroke();
     }
 }
 
-function drawBorders() {
-    ctx.strokeStyle = '#ff3333';
-    ctx.lineWidth = 20;
-    ctx.strokeRect(0,0, 4000, 4000);
-}
-
-function sendInput() {
-    const angle = Math.atan2(mouse.y - H/2, mouse.x - W/2);
-    // 'a' = angle, 'b' = boosting (Kısaltma)
-    socket.emit('input', { a: angle, b: isBoosting });
-}
-
-window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
-window.addEventListener('mousedown', () => isBoosting = true);
-window.addEventListener('mouseup', () => isBoosting = false);
-window.addEventListener('resize', () => { W=window.innerWidth; H=window.innerHeight; canvas.width=W; canvas.height=H; });
-
-W=window.innerWidth; H=window.innerHeight; canvas.width=W; canvas.height=H;
-requestAnimationFrame(animate);
+window.onmousemove=e=>{mouse.x=e.clientX; mouse.y=e.clientY;};
+window.onmousedown=()=>isBoosting=true; window.onmouseup=()=>isBoosting=false;
+window.onresize=()=>{W=window.innerWidth;H=window.innerHeight;canvas.width=W;canvas.height=H;};
+window.onresize();
+draw();
