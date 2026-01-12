@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WormEight - Multiplayer</title>
+    <title>WormEight Pro</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&display=swap" rel="stylesheet">
 </head>
@@ -12,32 +12,23 @@
     <canvas id="gameCanvas"></canvas>
 
     <div id="ui-layer">
-        
+        <canvas id="minimap" width="150" height="150"></canvas>
+
         <div class="hud" id="hud" style="display: none;">
             Skor: <span id="score">0</span>
-            <br>
-            <small>FPS: <span id="fps-counter">60</span></small>
         </div>
 
         <div id="main-menu">
             <h1 class="game-title">WORMEIGHT.IO</h1>
-            
             <div class="menu-box">
                 <div class="server-select">
                     <img src="https://flagcdn.com/w40/de.png" alt="DE">
                     <span>Germany (Render)</span>
                 </div>
-
                 <input type="text" id="nickname" placeholder="Takma Adın..." maxlength="12">
-                
                 <button id="play-btn">OYNA</button>
             </div>
-
-            <p class="footer-text">Hızlanmak için tıkla • Dönmek için fareyi kullan</p>
-        </div>
-
-        <div id="loading-screen" style="display: none;">
-            <h2>Bağlanıyor...</h2>
+            <p class="footer-text">Hızlanmak için tıkla • Power-up topla!</p>
         </div>
     </div>
 
