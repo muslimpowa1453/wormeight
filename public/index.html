@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wormate Multiplayer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="ui-layer">
+        <div class="score-board">
+            Online: <span id="online-count">0</span> | Skor: <span id="score">0</span>
+        </div>
+        
+        <div id="error-screen" style="display: none;">
+            <h1>BAĞLANTI HATASI</h1>
+            <p>Sunucu ile bağlantı kesildi.</p>
+            <button onclick="location.reload()">ANA MENÜYE DÖN</button>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
