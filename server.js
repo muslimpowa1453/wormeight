@@ -3,204 +3,154 @@ const app = express();
 const http = require('http');
 const server = http.createServer(app);
 const { Server } = require("socket.io");
-const io = new Server(server, { cors: { origin: "*" } });
+// Sıkıştırma ayarı ile bant genişliği tasarrufu
+const io = new Server(server, { 
+    cors: { origin: "*" },
+    perMessageDeflate: true 
+});
 const path = require('path');
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-// --- OYUN AYARLARI ---
-const MAP_SIZE = 4000; // Harita biraz daha büyük olsun
-const TICK_RATE = 20;  // Server 20 FPS çalışır (Client 60+ FPS interpole eder)
-const TURN_SPEED = 0.15; // Dönüş hızı (Radyan/Tick)
-const BASE_SPEED = 4;
+// --- OPTİMİZE EDİLMİŞ AYARLAR ---
+const MAP_SIZE = 4000;
+const TICK_RATE = 15; // 15 TPS idealdir (Client bunu 60/144 FPS'e tamamlar)
+const BASE_SPEED = 5;
 
 let players = {};
 let foods = [];
-let powerups = [];
-const FOOD_COUNT = 500;
-const POWERUP_COUNT = 20;
+const FOOD_COUNT = 400;
 
-// Power-up Tipleri ve Süreleri (Saniye cinsinden tick hesabı için x20 ile çarpılacak serverda)
-const POWERUP_TYPES = [
-    { type: 'agility', color: '#00FF00', duration: 40, label: 'AE' }, // "ae" = Agility/Manevra sandım
-    { type: 'x2',      color: '#FF00FF', duration: 60, label: '2x' },
-    { type: 'x5',      color: '#FF0000', duration: 40, label: '5x' },
-    { type: 'x10',     color: '#FFA500', duration: 20, label: '10x' },
-    { type: 'speed',   color: '#00FFFF', duration: 40, label: 'HIZ' },
-    { type: 'magnet',  color: '#0000FF', duration: 40, label: 'MIK' }
-];
-
-function randomColor() { return '#' + Math.floor(Math.random()*16777215).toString(16); }
-
-// Başlangıç nesneleri
-for (let i = 0; i < FOOD_COUNT; i++) spawnFood();
-for (let i = 0; i < POWERUP_COUNT; i++) spawnPowerup();
+// Şeker Tipleri (Wormate benzeri)
+const FOOD_TYPES = ['candy', 'donut', 'cookie', 'cake'];
 
 function spawnFood() {
     foods.push({
-        id: Math.random().toString(36).substr(2, 9),
-        x: Math.random() * MAP_SIZE,
-        y: Math.random() * MAP_SIZE,
-        radius: Math.random() * 5 + 5,
-        color: randomColor(),
-        value: 1
+        id: Math.random().toString(36).substr(2, 5), // Kısa ID
+        x: Math.round(Math.random() * MAP_SIZE),
+        y: Math.round(Math.random() * MAP_SIZE),
+        r: Math.floor(Math.random() * 5 + 5), // Radius
+        t: FOOD_TYPES[Math.floor(Math.random() * FOOD_TYPES.length)], // Type
+        c: Math.floor(Math.random() * 0xFFFFFF) // Renk (Integer olarak tutuyoruz, daha az yer kaplar)
     });
 }
 
-function spawnPowerup() {
-    const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
-    powerups.push({
-        id: Math.random().toString(36).substr(2, 9),
-        x: Math.random() * MAP_SIZE,
-        y: Math.random() * MAP_SIZE,
-        radius: 25, // Power-up daha büyük görünür
-        type: type.type,
-        color: type.color,
-        label: type.label,
-        duration: type.duration * 1000 // ms cinsinden
-    });
-}
+// Başlangıç Yemleri
+for (let i = 0; i < FOOD_COUNT; i++) spawnFood();
 
 io.on('connection', (socket) => {
-    socket.on('joinGame', (nickname) => {
+    socket.on('joinGame', (data) => {
         players[socket.id] = {
             id: socket.id,
-            nickname: nickname || "Misafir",
+            nick: data.nick.substring(0, 12) || "Guest",
+            skin: data.skin || 1, // Yılan deseni ID'si
             x: Math.random() * MAP_SIZE,
             y: Math.random() * MAP_SIZE,
-            radius: 15,
-            angle: Math.random() * Math.PI * 2,
+            angle: Math.random() * 6.28,
             targetAngle: 0,
             score: 0,
             speed: BASE_SPEED,
+            radius: 20, // Başlangıç kalınlığı
             history: [],
-            color: randomColor(),
-            boosting: false,
-            // Efektler
-            effects: {
-                agility: 0, multiplier: 1, speed: 0, magnet: 0
-            }
+            boosting: false
         };
-        // Kuyruk başlat
-        for(let i=0; i<20; i++) players[socket.id].history.push({x: players[socket.id].x, y: players[socket.id].y});
+        // Kuyruk başlangıcı
+        for(let i=0; i<10; i++) {
+            players[socket.id].history.push({x: players[socket.id].x, y: players[socket.id].y});
+        }
     });
 
     socket.on('input', (data) => {
-        const p = players[socket.id];
-        if (p) {
-            p.targetAngle = data.angle;
-            p.boosting = data.boosting;
+        if(players[socket.id]) {
+            players[socket.id].targetAngle = data.a; // 'angle' yerine 'a' (Veri tasarrufu)
+            players[socket.id].boosting = data.b;    // 'boosting' yerine 'b'
         }
     });
 
     socket.on('disconnect', () => delete players[socket.id]);
 });
 
-// --- OYUN DÖNGÜSÜ ---
 setInterval(() => {
+    let pack = { p: [], f: [] }; // Players, Foods (Kısaltılmış)
+
     for (const id in players) {
         const p = players[id];
         
-        // 1. Açısal Dönüş Fiziği (Yumuşak Dönüş)
+        // 1. Wormate Fiziği: Büyüdükçe yavaş dön
+        let turnSpeed = 0.15;
+        if(p.score > 1000) turnSpeed = 0.1;
+        if(p.score > 5000) turnSpeed = 0.05;
+
         let diff = p.targetAngle - p.angle;
-        // Açıyı -PI ile +PI arasına normalize et
         while (diff <= -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
-        
-        // Dönüş hızı (Agility varsa daha hızlı dön)
-        let turnSpeed = TURN_SPEED * (p.effects.agility > Date.now() ? 2 : 1);
         
         if (Math.abs(diff) < turnSpeed) p.angle = p.targetAngle;
         else p.angle += Math.sign(diff) * turnSpeed;
 
-        // 2. Hız ve Boost
-        let currentSpeed = p.effects.speed > Date.now() ? BASE_SPEED * 1.5 : BASE_SPEED;
-        
+        // 2. Hızlanma
+        let currentSpeed = p.speed;
         if (p.boosting && p.score > 10) {
-            currentSpeed *= 2;
-            p.score -= 0.1; // Skor harca
+            currentSpeed *= 1.8;
+            p.score -= 0.5; // Hızlı puan kaybı
+            p.radius = 20 + Math.sqrt(p.score/10); // Hızlanırken biraz incelme efekti eklenebilir ama şimdilik sabit
+        } else {
+            // Boyut hesabı (Wormate mantığı: Skor arttıkça kalınlaş)
+            p.radius = 20 + Math.floor(p.score / 500); 
+            if(p.radius > 60) p.radius = 60; // Maksimum kalınlık
         }
-        
-        // Hareket
+
         p.x += Math.cos(p.angle) * currentSpeed;
         p.y += Math.sin(p.angle) * currentSpeed;
 
-        // Harita Sınırları
+        // Harita Sınırı (Yumuşak çarpma yerine kayma)
         p.x = Math.max(0, Math.min(MAP_SIZE, p.x));
         p.y = Math.max(0, Math.min(MAP_SIZE, p.y));
 
-        // Kuyruk
+        // Kuyruk Mantığı (History)
+        // Her tick'te değil, hareket ettikçe kayıt al (Daha pürüzsüz)
         p.history.push({ x: p.x, y: p.y });
-        const targetLength = 20 + Math.floor(p.score / 2);
-        if (p.history.length > targetLength * 5) p.history.shift();
+        
+        // Kuyruk uzunluğu skora bağlı
+        const targetLen = 10 + Math.floor(p.score / 10);
+        // Çok fazla nokta tutma, sadece gerekli olanları tut
+        if (p.history.length > targetLen * 3) p.history.shift();
 
-        // 3. Mıknatıs Mantığı
-        let magnetRange = p.radius + 10;
-        if (p.effects.magnet > Date.now()) magnetRange = 300; // Mıknatıs varsa çekim alanı devasa
-
-        // Yem Kontrolü
+        // Yem Yeme (Basit Collision)
+        // Performans için sadece yakındaki yemleri kontrol et (Grid sistemi gerekir ama şimdilik düz döngü)
         for (let i = foods.length - 1; i >= 0; i--) {
             const f = foods[i];
             const dist = Math.hypot(p.x - f.x, p.y - f.y);
-
-            // Mıknatıs Çekimi
-            if (dist < magnetRange && dist > p.radius) {
-                // Yemi oyuncuya çek
-                const angleToPlayer = Math.atan2(p.y - f.y, p.x - f.x);
-                f.x += Math.cos(angleToPlayer) * 10; // Çekim hızı
-                f.y += Math.sin(angleToPlayer) * 10;
-            }
-
-            // Yeme
-            if (dist < p.radius + f.radius) {
-                // Skor çarpanı kontrolü
-                let multiplier = 1;
-                if (p.effects.multiplier > 1 && p.effects.multiplier_time > Date.now()) {
-                    multiplier = p.effects.multiplier;
-                }
-                
-                p.score += f.value * multiplier;
+            // Yılan kafası + Yem yarıçapı
+            if (dist < p.radius + f.r) {
+                p.score += 10; // Her yem 10 puan
                 foods.splice(i, 1);
                 spawnFood();
             }
         }
 
-        // 4. Power-up Kontrolü
-        for (let i = powerups.length - 1; i >= 0; i--) {
-            const pu = powerups[i];
-            const dist = Math.hypot(p.x - pu.x, p.y - pu.y);
-            
-            if (dist < p.radius + pu.radius) {
-                const endTime = Date.now() + pu.duration;
-                
-                if (pu.type === 'agility') p.effects.agility = endTime;
-                if (pu.type === 'speed') p.effects.speed = endTime;
-                if (pu.type === 'magnet') p.effects.magnet = endTime;
-                if (pu.type === 'x2') { p.effects.multiplier = 2; p.effects.multiplier_time = endTime; }
-                if (pu.type === 'x5') { p.effects.multiplier = 5; p.effects.multiplier_time = endTime; }
-                if (pu.type === 'x10') { p.effects.multiplier = 10; p.effects.multiplier_time = endTime; }
-
-                powerups.splice(i, 1);
-                spawnPowerup(); // Yenisini oluştur
-            }
-        }
+        // --- VERİ PAKETLEME (Veri tasarrufu için isimleri kısalttık ve sayıları yuvarladık) ---
+        pack.p.push({
+            i: p.id,
+            x: Math.round(p.x * 10) / 10, // 1 ondalık hane yeterli
+            y: Math.round(p.y * 10) / 10,
+            a: Math.round(p.angle * 100) / 100,
+            r: p.radius,
+            s: Math.floor(p.score),
+            h: p.history.filter((_, i) => i % 3 === 0).map(h => ({ x: Math.round(h.x), y: Math.round(h.y) })), // Her 3 noktadan 1'ini gönder (History sıkıştırma)
+            n: p.nick,
+            k: p.skin // Skin ID
+        });
     }
 
-    // State Gönder
-    // Veriyi küçültmek için sadece gerekli alanları gönderiyoruz
-    const pack = {
-        players: Object.values(players).map(p => ({
-            id: p.id, x: p.x, y: p.y, angle: p.angle, radius: p.radius, 
-            score: p.score, nickname: p.nickname, history: p.history, color: p.color
-        })),
-        foods: foods,
-        powerups: powerups
-    };
-    
-    io.emit('gameState', pack);
+    // Yemleri sadece değiştikleri zaman göndermek daha iyi olurdu ama şimdilik full gönderiyoruz
+    // (Bunu optimize etmek için 'delta compression' gerekir, ileri seviye)
+    pack.f = foods;
+
+    io.emit('u', pack); // 'update' yerine 'u' (Event ismini bile kısalttık)
 
 }, 1000 / TICK_RATE);
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Sunucu ${PORT} portunda çalışıyor`));
+server.listen(PORT, () => console.log(`Sunucu ${PORT} portunda`));
